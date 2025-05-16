@@ -1,114 +1,113 @@
 import streamlit as st
+import numpy as np
+import joblib
+import pandas as pd
 
-st.set_page_config(page_title="🚗 Car Component Failure Predictor", layout="centered")
+# ---- Load model and encoders once ----
+@st.cache_resource(show_spinner=False)
+def load_model_and_encoders():
+    model = joblib.load('component_failure_model.pkl')
+    le_component = joblib.load('le_component.pkl')
+    le_maintenance = joblib.load('le_maintenance.pkl')
+    return model, le_component, le_maintenance
 
-# --- Styles for futuristic UI ---
-st.markdown("""
+model, le_component, le_maintenance = load_model_and_encoders()
+
+# ---- Page config & styles ----
+st.set_page_config(page_title="🚗 Car Component Failure Predictor", layout="wide")
+
+st.markdown(
+    """
     <style>
-    body {
-        background-color: #0e1117;
-        color: #cbd5e1;
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    }
-    .title {
-        font-size: 2.8rem;
-        font-weight: 700;
-        color: #00ffe7;
-        text-align: center;
-        margin-bottom: 0;
-    }
-    .subtitle {
-        font-size: 1.25rem;
-        color: #81a1c1;
-        text-align: center;
-        margin-top: 0;
-        margin-bottom: 1.5rem;
-    }
-    .footer {
-        text-align: center;
-        font-size: 0.9rem;
-        margin-top: 3rem;
-        color: #5e81ac;
-        border-top: 1px solid #3b4252;
-        padding-top: 1rem;
-    }
-    a {
-        color: #88c0d0;
-        text-decoration: none;
-        margin: 0 0.5rem;
-        font-weight: 600;
-    }
-    a:hover {
-        color: #00ffe7;
-        text-decoration: underline;
-    }
-    .warning {
-        background-color: #ff004d;
-        padding: 0.8rem 1rem;
-        border-radius: 8px;
-        font-weight: 700;
-        color: white;
-        margin-top: 1rem;
-        text-align: center;
-        font-size: 1.1rem;
-        box-shadow: 0 0 15px #ff004daa;
-    }
-    .input-label {
-        font-weight: 600;
-        color: #81a1c1;
-        margin-bottom: 0.2rem;
-    }
-    .slider {
-        margin-bottom: 1rem;
-    }
+    body {background-color: #121212; color: #E0E0E0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;}
+    h1,h2,h3 {color: #00ffcc; font-weight: 700;}
+    .stButton>button {background-color: #00ffcc; color: #000; font-weight: 700; border-radius: 10px; padding: 10px 0;}
+    .stButton>button:hover {background-color: #00cc99; color: #fff;}
+    .failure-warning {background-color: #ff3333; color: white; padding: 10px; border-radius: 12px; font-weight: 700; box-shadow: 0 0 15px #ff3333aa; text-align: center;}
+    .success-msg {background-color: #33cc33; color: white; padding: 10px; border-radius: 12px; font-weight: 700; text-align: center;}
     </style>
-""", unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True,
+)
 
+# ---- Sidebar Inputs ----
+st.sidebar.header("Input Parameters")
 
-st.markdown('<h1 class="title">🚗 Car Component Failure Predictor</h1>', unsafe_allow_html=True)
-st.markdown('<p class="subtitle">Made with ❤️ by Muhammad Areeb Rizwan • Mechanical Engineer & AI Enthusiast</p>', unsafe_allow_html=True)
+component = st.sidebar.selectbox("Choose Component", le_component.classes_)
+temperature = st.sidebar.slider("Temperature (°C)", 40.0, 160.0, 90.0, 0.5)
+vibration = st.sidebar.slider("Vibration Level", 0.0, 100.0, 20.0, 0.1)
+usage = st.sidebar.slider("Usage (hours)", 0, 2500, 1000, 10)
+maintenance_due = st.sidebar.radio("Maintenance Due?", options=le_maintenance.classes_)
 
-# --- Input Section ---
-component = st.selectbox("Select Component", ["Engine", "Transmission", "Brake Pad", "Exhaust", "Suspension"])
+enable_predict = usage > 0
+
+# ---- Main UI ----
+st.title("🚗 Car Component Failure Predictor")
+
+st.markdown(f"### 🔍 Component Selected: **{component}**")
 
 col1, col2 = st.columns(2)
-
 with col1:
-    st.markdown('<label class="input-label">Temperature (°C)</label>', unsafe_allow_html=True)
-    temperature = st.slider("", 40.0, 160.0, 90.0, step=0.5, key="temp", help="Operating temperature of component")
-
-    st.markdown('<label class="input-label">Vibration (units)</label>', unsafe_allow_html=True)
-    vibration = st.slider("", 0.0, 100.0, 20.0, step=0.1, key="vib", help="Vibration level measured")
-
+    st.write(f"- Temperature: **{temperature:.1f} °C**")
+    st.write(f"- Usage Hours: **{usage}**")
 with col2:
-    st.markdown('<label class="input-label">Usage (hours)</label>', unsafe_allow_html=True)
-    usage = st.slider("", 0, 2500, 1000, step=10, key="usage", help="Total usage hours of the component")
+    st.write(f"- Vibration Level: **{vibration:.1f}**")
+    st.write(f"- Maintenance Due: **{maintenance_due}**")
 
-    st.markdown('<label class="input-label">Maintenance Due?</label>', unsafe_allow_html=True)
-    maintenance_due = st.radio("", ("Yes", "No"), index=0, key="maint", horizontal=True)
+st.markdown("---")
 
-# --- Prediction Button ---
-predict_button = st.button("Predict Failure Risk 🚦")
+if enable_predict:
+    if st.button("🚦 Predict Failure Risk"):
+        # Prepare input vector
+        component_enc = le_component.transform([component])[0]
+        maintenance_enc = le_maintenance.transform([maintenance_due])[0]
+        
+        X_input = np.array([[component_enc, temperature, vibration, usage, maintenance_enc]])
+        
+        # Predict failure probability
+        pred_proba = model.predict_proba(X_input)[0][1]  # Probability of class 1 (failure)
+        
+        progress_bar = st.progress(0)
+        for i in range(0, int(pred_proba * 100) + 1):
+            progress_bar.progress(i)
+        
+        if pred_proba > 0.5:
+            st.markdown(f'<div class="failure-warning">⚠️ Failure predicted with probability: {pred_proba:.2f}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="success-msg">✅ No failure predicted (probability: {pred_proba:.2f})</div>', unsafe_allow_html=True)
+        
+        # Download summary
+        result_text = (
+            f"Component: {component}\n"
+            f"Temperature: {temperature} °C\n"
+            f"Vibration: {vibration}\n"
+            f"Usage: {usage} hours\n"
+            f"Maintenance Due: {maintenance_due}\n"
+            f"Failure Probability: {pred_proba:.2f}"
+        )
+        st.download_button("💾 Download Prediction Summary", data=result_text, file_name="prediction.txt", mime="text/plain")
+else:
+    st.warning("Please increase Usage hours above zero to enable prediction.")
 
-# --- Placeholder for result ---
-if predict_button:
-    # Dummy example — replace with your model prediction code:
-    # pred_prob = model.predict_proba([[temperature, vibration, usage, maintenance_encoded]])[0][1]
-    pred_prob = 0.67  # Replace with actual model prediction
+# Optional: show failure history or any other info here
+with st.expander("📈 View Component Failure History (Sample)"):
+    data = {
+        "Component": ["Engine", "Transmission", "Brake Pad", "Exhaust", "Suspension"],
+        "Failure Rate (%)": [12, 18, 28, 8, 15],
+        "Last 30 days failures": [5, 7, 11, 2, 6],
+    }
+    df_history = pd.DataFrame(data)
+    st.dataframe(df_history)
 
-    if pred_prob > 0.5:
-        st.markdown(f'<div class="warning">⚠️ Warning: Failure predicted with probability {pred_prob:.2f}</div>', unsafe_allow_html=True)
-    else:
-        st.success(f"✅ No failure predicted (probability: {pred_prob:.2f})")
-
-# --- Footer with credits and links ---
-st.markdown("""
-<div class="footer">
-    <p>### 👨‍💻 Made By: M Areeb Rizwan</p>
-    <p>
-        🔗 <a href="https://www.linkedin.com/in/areebrizwan" target="_blank">LinkedIn</a> •
-        🌐 <a href="https://sites.google.com/view/m-areeb-rizwan/home" target="_blank">Portfolio</a> •
-        💻 <a href="https://github.com/Areebrizz" target="_blank">GitHub</a>
+# Footer
+st.markdown(
+    """
+    <hr>
+    <p style="text-align:center; font-size:0.85rem; color:#888;">
+    Made with ❤️ by <b>Muhammad Areeb Rizwan</b> — 
+    <a href="https://linkedin.com/in/areebrizwan" target="_blank" style="color:#00ffcc;">LinkedIn</a> • 
+    <a href="https://github.com/Areebrizz" target="_blank" style="color:#00ffcc;">GitHub</a>
     </p>
-</div>
-""", unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True,
+)
